@@ -2,6 +2,7 @@ package consul_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,7 +35,7 @@ func (suite *ConsulSuite) SetupTest() {
 
 	suite.context, suite.contextCancel = context.WithCancel(context.Background())
 	suite.Source, err = consul.NewSource(consul.Options{
-		Client:  suite.client,
+		Client: suite.client,
 		Options: configify.Options{
 			Namespace: configify.Namespace{Name: "FOO", Delimiter: "/"},
 			Context:   suite.context,
@@ -73,17 +74,13 @@ func (suite *ConsulSuite) resetStore() {
 
 func (suite *ConsulSuite) set(key, value string) {
 	_, err := suite.kv.Put(&api.KVPair{Key: key, Value: []byte(value)}, nil)
-	suite.Require().NoError(err, "unable to write pair " + key + "=" + value)
+	suite.Require().NoError(err, "unable to write pair "+key+"="+value)
 }
 
 func (suite *ConsulSuite) TestFactoryValidation() {
 	options := consul.Options{
-		Client:          suite.client,
-		RefreshInterval: 5 * time.Second,
-		Options: configify.Options{
-			Namespace: configify.Namespace{Name: "FOO", Delimiter: "/"},
-			Context:   suite.context,
-		},
+		Client:  suite.client,
+		Options: configify.Options{Context: suite.context},
 	}
 
 	options.Client = nil
@@ -96,13 +93,39 @@ func (suite *ConsulSuite) TestFactoryValidation() {
 	suite.Error(err, "should return error w/ nil context")
 }
 
+// TestWatcher makes sure that your registered watcher fires when a value is updated
+// in the backend consul KV store.
+func (suite *ConsulSuite) TestWatcher() {
+	source, _ := consul.NewSource(consul.Options{
+		Client:          suite.client,
+		Options:         configify.Options{Context: suite.context},
+		RefreshInterval: 1 * time.Second,
+	})
+
+	// Make sure the initial value is correct
+	value, _ := source.String("FOO/HTTP_HOST")
+	suite.Equal("foo.example.com", value)
+
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+
+	source.Watch(func(s configify.Source) {
+		value, _ := source.String("FOO/HTTP_HOST")
+		suite.Equal("google.com", value)
+		wg.Done()
+	})
+
+	suite.set("FOO/HTTP_HOST", "google.com")
+	wg.Wait()
+}
+
 // TestRefreshDelay verifies that updates to the backend Consul store are not immediate, but
 // happen after the configured refresh interval.
 func (suite *ConsulSuite) TestRefreshDelay() {
 	source, _ := consul.NewSource(consul.Options{
 		Client:          suite.client,
 		Options:         configify.Options{Context: suite.context},
-		RefreshInterval: 2 * time.Second,
+		RefreshInterval: 1 * time.Second,
 	})
 
 	// Read the initial value then change it in Consul
@@ -116,15 +139,14 @@ func (suite *ConsulSuite) TestRefreshDelay() {
 	suite.Equal("foo.example.com", value)
 
 	// Now that another refresh cycle has occurred, the new value is available.
-	time.Sleep(3 * time.Second)
+	time.Sleep(2 * time.Second)
 	value, _ = source.String("FOO/HTTP_HOST")
 	suite.Equal("google.com", value)
 
 	// Since we didn't change it, the next refresh cycle should be the same value.
-	time.Sleep(3 * time.Second)
+	time.Sleep(2 * time.Second)
 	value, _ = source.String("FOO/HTTP_HOST")
 	suite.Equal("google.com", value)
-
 }
 
 // TestRefreshFailure ensures that we can still create a valid store even if we can't
@@ -378,7 +400,7 @@ func (suite *ConsulSuite) TestBool() {
 
 func (suite *ConsulSuite) TestDuration() {
 	// Good values we can parse
-	suite.ExpectDuration("DURATION_1", 5*time.Minute + 3*time.Second, true)
+	suite.ExpectDuration("DURATION_1", 5*time.Minute+3*time.Second, true)
 	suite.ExpectDuration("DURATION_2", 12*time.Hour, true)
 
 	// Values that exist but don't parse to this type
@@ -403,5 +425,3 @@ func (suite *ConsulSuite) TestTime() {
 	suite.ExpectTime("NO_NAMESPACE_STRING", time.Time{}, false)
 	suite.ExpectTime("ASDF", time.Time{}, false)
 }
-
-

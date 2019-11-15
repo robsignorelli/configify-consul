@@ -26,7 +26,7 @@ if err != nil {
 }
 
 // Create a source to read from Consul 
-source, err = consul.NewSource(consul.Options{
+source, err := consul.NewSource(consul.Options{
     Client:  client,
     Options: configify.Options{Context: context.Background()},
 })
@@ -47,3 +47,23 @@ you need to do is feed your Consul-backed source to the binder rather
 than the Environment-backed binder.
 
 https://github.com/robsignorelli/configify#struct-binding
+
+## Watch for Updates
+
+You can let configify automatically fire a callback whenever we detect
+changes to your app's config, so you can react accordingly. Now you
+can update your configuration w/o having to restart your program.
+
+```go
+source, _ := consul.NewSource(...)
+source.Watch(func (updated configify.Source) {
+	myConfig.RetryCount, _ := updated.Int("RETRY_COUNT")
+	myConfig.SomeToken, _ := updated.String("SOME_TOKEN")
+	...
+})
+```
+
+Be aware that your `Watcher` callback does NOT fire when the Consul source
+loads config values for the first time (i.e. when you call `NewSource`).
+It only fires when it detects a modification to the KV store any time
+after the source was initialized.
