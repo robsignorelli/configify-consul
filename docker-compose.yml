@@ -1,0 +1,11 @@
+version: "3"
+
+services:
+  configify_consul:
+    image: consul
+    ports:
+      - "8300:8300"
+      - "8500:8500"
+      - "8600:8600"
+      - "8600:8600/udp"
+    container_name: configify_consul
