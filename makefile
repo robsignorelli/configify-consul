@@ -12,7 +12,9 @@ test:
 	go test $(TESTING_FLAGS) -timeout $(TIMEOUT) $(PACKAGE)/...
 
 #
-# Runs through our suite of all unit tests
+# Checks code coverage of our tools. Use the following to visualize gaps:
+#
+#   go tool cover -html=coverage.out
 #
 coverage:
 	go test $(TESTING_FLAGS) -cover -coverprofile=coverage.out -timeout $(TIMEOUT) $(PACKAGE)/...
