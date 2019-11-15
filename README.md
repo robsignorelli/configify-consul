@@ -1,4 +1,6 @@
- # Configify: Consul Plugin
+[![Go Report Card](https://goreportcard.com/badge/github.com/robsignorelli/configify-consul)](https://goreportcard.com/report/github.com/robsignorelli/configify-consul)
+
+# Configify: Consul Plugin
 
 This is the Consul plugin for [Configify](https://github.com/robsignorelli/configify),
 a Go library for grabbing values from various places that have your
