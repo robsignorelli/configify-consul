@@ -12,14 +12,14 @@ import (
 // NewSource creates a new config source that is backed by a Consul Key/Value store. You
 // provide the consul client (so you can share connections w/ your service discovery and such)
 // and this will extract config values for you.
-func NewSource(options Options) (configify.Source, error) {
+func NewSource(options Options) (configify.SourceWatcher, error) {
 	if options.Context == nil {
 		return nil, errors.New("consul source: context is nil")
 	}
 	if options.Client == nil {
 		return nil, errors.New("consul source: client is nil")
 	}
-	if options.RefreshInterval < 1 * time.Second {
+	if options.RefreshInterval < 1*time.Second {
 		options.RefreshInterval = 10 * time.Second // assume 10s updates if you don't specify anything
 	}
 	if options.Defaults == nil {
@@ -57,6 +57,7 @@ type consulSource struct {
 	massage   configify.Massage
 	values    map[string]string
 	lastIndex uint64
+	watcher   func(source configify.Source)
 }
 
 func (c consulSource) Options() configify.Options {
@@ -64,19 +65,19 @@ func (c consulSource) Options() configify.Options {
 }
 
 func (c *consulSource) listen() error {
-	go func() {
+	go func(source *consulSource) {
 		for {
 			select {
-			case <-c.options.Context.Done():
+			case <-source.options.Context.Done():
 				return
-			case <-time.After(c.options.RefreshInterval):
+			case <-time.After(source.options.RefreshInterval):
 				break
 			}
 			// We do a refresh when we first set up the source, so don't fire off a second
 			// refresh until the first timeout.
-			c.refresh()
+			source.refresh()
 		}
-	}()
+	}(c)
 	return nil
 }
 
@@ -95,8 +96,15 @@ func (c *consulSource) refresh() {
 	for _, pair := range pairs {
 		updatedValues[pair.Key] = string(pair.Value)
 	}
+
 	c.lastIndex = meta.LastIndex
 	c.values = updatedValues
+
+	// You can't set up a watcher until we've done the initial refresh() in
+	// NewSource(), so this is guaranteed to only fire on subsequent auto-updates.
+	if c.watcher != nil {
+		c.watcher(c)
+	}
 }
 
 func (c consulSource) lookup(key string) (string, bool) {
@@ -104,6 +112,10 @@ func (c consulSource) lookup(key string) (string, bool) {
 		return strings.TrimSpace(value), true
 	}
 	return "", false
+}
+
+func (c *consulSource) Watch(callback func(source configify.Source)) {
+	c.watcher = callback
 }
 
 func (c consulSource) String(key string) (string, bool) {
