@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+var consulTestEndpoint = "127.0.0.1:8500"
+
 func TestConsulSuite(t *testing.T) {
 	suite.Run(t, new(ConsulSuite))
 }
@@ -34,13 +36,13 @@ func (suite *ConsulSuite) SetupTest() {
 	suite.resetStore()
 
 	suite.context, suite.contextCancel = context.WithCancel(context.Background())
-	suite.Source, err = consul.NewSource(consul.Options{
-		Client: suite.client,
-		Options: configify.Options{
-			Namespace: configify.Namespace{Name: "FOO", Delimiter: "/"},
-			Context:   suite.context,
-		},
-	})
+	suite.Source, err = consul.NewSource(
+		configify.Context(suite.context),
+		configify.Address(consulTestEndpoint),
+		configify.Namespace("FOO"),
+		configify.NamespaceDelim("/"),
+		configify.RefreshInterval(50*time.Millisecond),
+	)
 	suite.Require().NoError(err, "unable to create consul source")
 }
 
@@ -78,29 +80,40 @@ func (suite *ConsulSuite) set(key, value string) {
 }
 
 func (suite *ConsulSuite) TestFactoryValidation() {
-	options := consul.Options{
-		Client:  suite.client,
-		Options: configify.Options{Context: suite.context},
-	}
+	_, err := consul.NewSource(
+		configify.Address(consulTestEndpoint),
+	)
+	suite.Error(err, "should return an error: no context")
 
-	options.Client = nil
-	_, err := consul.NewSource(options)
-	suite.Error(err, "should return error w/ nil client")
+	_, err = consul.NewSource(
+		configify.Context(context.TODO()),
+	)
+	suite.Error(err, "should return an error: no address")
 
-	options.Client = suite.client
-	options.Context = nil
-	_, err = consul.NewSource(options)
-	suite.Error(err, "should return error w/ nil context")
+	_, err = consul.NewSource(
+		configify.Context(context.TODO()),
+		configify.Address("ftp://moo.:random-junk-host:12938129381"),
+	)
+	suite.Error(err, "should return an error: bad address")
+
+	// The consul client doesn't fail at this point. Your calls just won't work.
+	_, err = consul.NewSource(
+		configify.Context(context.TODO()),
+		configify.Address(consulTestEndpoint),
+		configify.Username("hello"),
+		configify.Password("world"),
+	)
+	suite.NoError(err, "should not return an error when supplying bad credentials")
 }
 
 // TestWatcher makes sure that your registered watcher fires when a value is updated
 // in the backend consul KV store.
 func (suite *ConsulSuite) TestWatcher() {
-	source, _ := consul.NewSource(consul.Options{
-		Client:          suite.client,
-		Options:         configify.Options{Context: suite.context},
-		RefreshInterval: 1 * time.Second,
-	})
+	source, _ := consul.NewSource(
+		configify.Context(suite.context),
+		configify.Address(consulTestEndpoint),
+		configify.RefreshInterval(1*time.Second),
+	)
 
 	// Make sure the initial value is correct
 	value, _ := source.String("FOO/HTTP_HOST")
@@ -115,6 +128,7 @@ func (suite *ConsulSuite) TestWatcher() {
 		wg.Done()
 	})
 
+	// Update the value then wait for our handler to detect the update.
 	suite.set("FOO/HTTP_HOST", "google.com")
 	wg.Wait()
 }
@@ -122,11 +136,11 @@ func (suite *ConsulSuite) TestWatcher() {
 // TestRefreshDelay verifies that updates to the backend Consul store are not immediate, but
 // happen after the configured refresh interval.
 func (suite *ConsulSuite) TestRefreshDelay() {
-	source, _ := consul.NewSource(consul.Options{
-		Client:          suite.client,
-		Options:         configify.Options{Context: suite.context},
-		RefreshInterval: 1 * time.Second,
-	})
+	source, _ := consul.NewSource(
+		configify.Context(suite.context),
+		configify.Address(consulTestEndpoint),
+		configify.RefreshInterval(1*time.Second),
+	)
 
 	// Read the initial value then change it in Consul
 	value, _ := source.String("FOO/HTTP_HOST")
@@ -152,14 +166,13 @@ func (suite *ConsulSuite) TestRefreshDelay() {
 // TestRefreshFailure ensures that we can still create a valid store even if we can't
 // establish a real connection to Consul. You get blank values
 func (suite *ConsulSuite) TestRefreshFailure() {
-	clientConfig := api.DefaultConfig()
-	clientConfig.Address = "asldjfaslkdjf"
-	clientBadConnection, _ := api.NewClient(clientConfig)
-
-	source, _ := consul.NewSource(consul.Options{
-		Client:  clientBadConnection,
-		Options: configify.Options{Context: suite.context},
-	})
+	// The consul.NewClient() function only barfs if it can't recognize the protocol. It
+	// doesn't do anything if the host is bad, unfortunately.
+	source, _ := consul.NewSource(
+		configify.Context(suite.context),
+		configify.Address("asldjfaslkdjf"),
+		configify.RefreshInterval(1*time.Second),
+	)
 
 	text, ok := source.String("FOO/HTTP_HOST")
 	suite.Equal("", text)
@@ -173,11 +186,11 @@ func (suite *ConsulSuite) TestRefreshFailure() {
 // TestCancelContext ensures that we stop listening for updates in Consul when the
 // underlying context has expired.
 func (suite *ConsulSuite) TestCancelContext() {
-	source, _ := consul.NewSource(consul.Options{
-		Client:          suite.client,
-		Options:         configify.Options{Context: suite.context},
-		RefreshInterval: 2 * time.Second,
-	})
+	source, _ := consul.NewSource(
+		configify.Context(suite.context),
+		configify.Address(consulTestEndpoint),
+		configify.RefreshInterval(2*time.Second),
+	)
 
 	// We should have the initial values loaded at this point, so stop listening and update Consul
 	suite.contextCancel()

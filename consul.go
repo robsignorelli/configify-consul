@@ -12,22 +12,27 @@ import (
 // NewSource creates a new config source that is backed by a Consul Key/Value store. You
 // provide the consul client (so you can share connections w/ your service discovery and such)
 // and this will extract config values for you.
-func NewSource(options Options) (configify.SourceWatcher, error) {
+func NewSource(opts ...configify.Option) (configify.SourceWatcher, error) {
+	options := apply(opts, &configify.Options{
+		Defaults:        configify.Empty(),
+		RefreshInterval: 10 * time.Second,
+	})
+
 	if options.Context == nil {
-		return nil, errors.New("consul source: context is nil")
+		return nil, errors.New("consul source: missing context option")
 	}
-	if options.Client == nil {
-		return nil, errors.New("consul source: client is nil")
+	if options.Address == "" {
+		return nil, errors.New("consul source: missing address option")
 	}
-	if options.RefreshInterval < 1*time.Second {
-		options.RefreshInterval = 10 * time.Second // assume 10s updates if you don't specify anything
-	}
-	if options.Defaults == nil {
-		options.Defaults = configify.Empty()
+
+	client, err := api.NewClient(toConsulConfig(*options))
+	if err != nil {
+		return nil, errors.Wrapf(err, "consul source: connect error")
 	}
 	source := consulSource{
-		kv:      options.Client.KV(),
-		options: options,
+		client:  client,
+		kv:      client.KV(),
+		options: *options,
 		massage: configify.Massage{},
 	}
 
@@ -36,24 +41,29 @@ func NewSource(options Options) (configify.SourceWatcher, error) {
 	return &source, source.listen()
 }
 
-// Options includes all of the standard 'configify' options as well as the connection/refresh
-// details you want to apply to your source.
-type Options struct {
-	// Options contains all of the standard config knobs.
-	configify.Options
+func toConsulConfig(options configify.Options) *api.Config {
+	consulConfig := api.DefaultConfig()
+	consulConfig.Address = options.Address
+	if options.Username != "" || options.Password != "" {
+		consulConfig.HttpAuth = &api.HttpBasicAuth{
+			Username: options.Username,
+			Password: options.Password,
+		}
+	}
+	return consulConfig
+}
 
-	// Client is the Consul API client that we'll use to connect to the backend Consul service.
-	Client *api.Client
-
-	// RefreshInterval tells us how frequently we'll check Consul for updated values. It
-	// defaults to 10s. You can set it more or less frequently, but you can't have a frequency
-	// less than 1s.
-	RefreshInterval time.Duration
+func apply(options []configify.Option, defaults *configify.Options) *configify.Options {
+	for _, option := range options {
+		option(defaults)
+	}
+	return defaults
 }
 
 type consulSource struct {
+	client    *api.Client
 	kv        *api.KV
-	options   Options
+	options   configify.Options
 	massage   configify.Massage
 	values    map[string]string
 	lastIndex uint64
@@ -61,7 +71,7 @@ type consulSource struct {
 }
 
 func (c consulSource) Options() configify.Options {
-	return c.options.Options
+	return c.options
 }
 
 func (c *consulSource) listen() error {
@@ -70,7 +80,7 @@ func (c *consulSource) listen() error {
 			select {
 			case <-source.options.Context.Done():
 				return
-			case <-time.After(source.options.RefreshInterval):
+			case <-time.After(c.Options().RefreshInterval):
 				break
 			}
 			// We do a refresh when we first set up the source, so don't fire off a second
