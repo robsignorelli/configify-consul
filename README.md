@@ -21,22 +21,20 @@ if you're also using Consul for service discovery, you can reuse
 that connection to read from your Key/Values as well.
 
 ```go
-// Connect to Consul. You can use it outside of Configify, too.
-client, err := api.NewClient(api.DefaultConfig())
+source, err := consul.NewSource(
+	configify.Context(suite.context),
+	configify.Address("consul.host:8500"),
+	configify.Namespace("FOO"),
+	configify.NamespaceDelim("/"),
+	configify.RefreshInterval(5*time.Second))
+
 if err != nil {
 	// Handle as you see fit...
 }
 
-// Create a source to read from Consul 
-source, err := consul.NewSource(consul.Options{
-    Client:  client,
-    Options: configify.Options{Context: context.Background()},
-})
-if err != nil {
-	// Handle as you see fit...
-}
-
-// Just like any configify.Source, you can read values individually...
+// Just like any configify.Source, you can read values individually. It
+// will also honor namespace prefixes so you're really looking up the
+// values "FOO/HTTP_HOST" and "FOO/HTTP_PORT".
 stringValue, ok := source.String("HTTP_HOST")
 int16Value, ok := source.Int16("HTTP_PORT")
 ...
